@@ -1,0 +1,228 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getApiBaseUrl } from '../lib/api';
+
+const apiBase = getApiBaseUrl();
+---
+
+<Layout title="Personajes · Rick & Morty API">
+  <h1>Personajes de <span class="accent">Rick & Morty</span></h1>
+  <p class="sub">
+    Explora el multiverso. Busca personajes por nombre y filtra por estado. Datos
+    servidos por nuestra API NestJS que consulta la API pública de Rick & Morty.
+  </p>
+
+  <section class="controls">
+    <input
+      id="search"
+      type="search"
+      placeholder="Buscar personaje..."
+      autocomplete="off"
+    />
+    <select id="status">
+      <option value="">Todos los estados</option>
+      <option value="alive">Vivo</option>
+      <option value="dead">Muerto</option>
+      <option value="unknown">Desconocido</option>
+    </select>
+  </section>
+
+  <div id="meta" class="meta" hidden></div>
+
+  <section id="grid" class="grid">
+    <p class="loading">Cargando personajes...</p>
+  </section>
+
+  <nav id="pagination" class="pagination" hidden>
+    <button id="prev" class="btn" disabled>← Anterior</button>
+    <span id="pageInfo" class="page-info"></span>
+    <button id="next" class="btn">Siguiente →</button>
+  </nav>
+
+  <p id="error" class="error" hidden></p>
+</Layout>
+
+<style>
+  .controls {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  #search {
+    flex: 1 1 260px;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  #status {
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .meta {
+    color: var(--muted);
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 1.25rem;
+  }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    transition: transform 0.2s ease, border-color 0.2s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .card:hover { transform: translateY(-4px); border-color: var(--accent); }
+  .card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .card-body { padding: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; flex: 1; }
+  .card h3 { margin: 0; font-size: 1.05rem; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    width: fit-content;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.alive { background: #55cc44; }
+  .dot.dead { background: #d63d2e; }
+  .dot.unknown { background: #9e9e9e; }
+  .species { color: var(--muted); font-size: 0.9rem; }
+  .location-label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .location { font-size: 0.9rem; color: var(--text); }
+  .loading, .empty { text-align: center; color: var(--muted); padding: 2rem; grid-column: 1 / -1; }
+  .pagination { display: flex; justify-content: center; align-items: center; gap: 1.25rem; margin-top: 2rem; }
+  .btn {
+    padding: 0.65rem 1.25rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); background: #1c3350; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .page-info { color: var(--muted); font-size: 0.9rem; }
+  .error {
+    color: #ff8f8f;
+    background: rgba(214, 61, 46, 0.12);
+    border: 1px solid rgba(214, 61, 46, 0.4);
+    padding: 0.9rem 1rem;
+    border-radius: 10px;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 520px) {
+    .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.9rem; }
+    .pagination { flex-wrap: wrap; }
+  }
+</style>
+
+<script is:inline define:vars={{ apiBase }}>
+  (() => {
+    const state = { page: 1, name: '', status: '' };
+    const grid = document.getElementById('grid');
+    const metaEl = document.getElementById('meta');
+    const pagination = document.getElementById('pagination');
+    const pageInfo = document.getElementById('pageInfo');
+    const errorEl = document.getElementById('error');
+    const searchInput = document.getElementById('search');
+    const statusSelect = document.getElementById('status');
+    const prevBtn = document.getElementById('prev');
+    const nextBtn = document.getElementById('next');
+
+    let timer = null;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { state.name = searchInput.value.trim(); state.page = 1; load(); }, 350);
+    });
+    statusSelect.addEventListener('change', () => { state.status = statusSelect.value; state.page = 1; load(); });
+    prevBtn.addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+    nextBtn.addEventListener('click', () => { state.page++; load(); });
+
+    const statusLabel = { alive: 'Vivo', dead: 'Muerto', unknown: 'Desconocido' };
+    const dotClass = { alive: 'alive', dead: 'dead', unknown: 'unknown' };
+
+    async function load() {
+      errorEl.hidden = true;
+      const params = new URLSearchParams({ page: String(state.page) });
+      if (state.name) params.set('name', state.name);
+      if (state.status) params.set('status', state.status);
+
+      grid.innerHTML = '<p class="loading">Cargando personajes...</p>';
+      try {
+        const res = await fetch(`${apiBase}/api/characters?${params}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const message = data.error || `Error ${res.status}`;
+          renderEmpty();
+          showError(message);
+          pagination.hidden = true;
+          metaEl.hidden = true;
+          return;
+        }
+        const data = await res.json();
+        metaEl.textContent = `${data.info.count} personajes encontrados`;
+        metaEl.hidden = false;
+        pagination.hidden = false;
+        pageInfo.textContent = `Página ${state.page} de ${data.info.pages || 1}`;
+        prevBtn.disabled = !data.info.prev;
+        nextBtn.disabled = !data.info.next;
+        renderGrid(data.results || []);
+        grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        renderEmpty();
+        showError('No se pudo conectar con la API. Verifica que esté en línea.');
+        pagination.hidden = true;
+        metaEl.hidden = true;
+      }
+    }
+
+    function renderGrid(chars) {
+      if (!chars.length) { renderEmpty('No se encontraron personajes.'); return; }
+      grid.innerHTML = chars.map((c) => `
+        <article class="card">
+          <img src="${c.image}" alt="${esc(c.name)}" loading="lazy" />
+          <div class="card-body">
+            <h3>${esc(c.name)}</h3>
+            <span class="badge"><span class="dot ${dotClass[c.status.toLowerCase()] || 'unknown'}"></span>${statusLabel[c.status.toLowerCase()] || c.status}</span>
+            <span class="species">${esc(c.species)} · ${esc(c.gender)}</span>
+            <span class="location-label">Última ubicación</span>
+            <span class="location">${esc(c.location?.name || 'Desconocida')}</span>
+          </div>
+        </article>`).join('');
+    }
+
+    function renderEmpty(msg = '') {
+      grid.innerHTML = msg ? `<p class="empty">${esc(msg)}</p>` : '';
+    }
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    load();
+  })();
+</script>
